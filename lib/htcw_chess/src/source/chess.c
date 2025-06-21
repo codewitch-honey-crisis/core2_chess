@@ -196,7 +196,7 @@ static chess_value_t en_passant_target_from_move(const chess_game_t* game, chess
     }
     return is_en_passant_target(game, tmp) ? tmp : -1;
 }
-static chess_value_t compute_moves(const chess_game_t* game, chess_value_t index, chess_value_t* out_moves, const chess_value_t* game_board) {
+static chess_size_t compute_moves(const chess_game_t* game, chess_index_t index, chess_index_t* out_moves, const chess_id_t* game_board) {
     const chess_value_t id = game_board[index];
     if (id == -1) {
         return 0;
@@ -409,13 +409,13 @@ static chess_value_t compute_moves(const chess_game_t* game, chess_value_t index
     }
     return result;
 }
-chess_value_t chess_contains_move(const chess_value_t* moves, chess_value_t moves_size, chess_value_t index) {
+chess_bool_t chess_contains_move(const chess_value_t* moves, chess_size_t moves_size, chess_index_t index) {
     for (chess_value_t i = 0; i < moves_size; ++i) {
         if (moves[i] == index) {
-            return 1;
+            return CHESS_TRUE;
         }
     }
-    return 0;
+    return CHESS_FALSE;
 }
 static chess_value_t is_checked_king(const chess_game_t* game, chess_value_t king_index, const chess_value_t* game_board) {
     chess_value_t tmp_moves[64];
@@ -745,7 +745,7 @@ chess_value_t chess_move(chess_game_t* game, chess_value_t index_from, chess_val
     }
     return -2;
 }
-chess_value_t chess_compute_moves(const chess_game_t* game, chess_value_t index, chess_value_t* out_moves) {
+chess_size_t chess_compute_moves(const chess_game_t* game, chess_index_t index, chess_index_t* out_moves) {
     if (game == NULL || index < 0 || index > 63) {
         return 0;
     }
@@ -771,7 +771,7 @@ chess_value_t chess_compute_moves(const chess_game_t* game, chess_value_t index,
     }
     return result;
 }
-chess_value_t chess_turn(const chess_game_t* game) {
+chess_team_t chess_turn(const chess_game_t* game) {
     return game->turn;
 }
 chess_value_t chess_index_to_id(const chess_game_t* game, chess_value_t index) {
@@ -780,8 +780,8 @@ chess_value_t chess_index_to_id(const chess_game_t* game, chess_value_t index) {
     }
     return game->board[index];
 }
-chess_status_t chess_status(const chess_game_t* game, chess_value_t team) {
-    const chess_value_t index = game->kings[team];
+chess_status_t chess_status(const chess_game_t* game, chess_team_t team) {
+    const chess_value_t index = game->kings[(int)team];
     chess_value_t moves[64];
     if (is_checked_king(game, index, game->board)) {
         if (0 == chess_compute_moves(game, index, moves)) {
@@ -795,9 +795,9 @@ chess_status_t chess_status(const chess_game_t* game, chess_value_t team) {
     }
     return CHESS_NORMAL;
 }
-chess_value_t chess_promote_pawn(chess_game_t* game, chess_value_t index, chess_type_t new_type) {
+chess_result_t chess_promote_pawn(chess_game_t* game, chess_index_t index, chess_type_t new_type) {
     if (game == NULL || index < 0 || index > 63 || new_type == CHESS_PAWN) {
-        return 0;
+        return CHESS_INVALID;
     }
     const chess_value_t id = game->board[index];
     const chess_value_t team = CHESS_TEAM(id);
@@ -815,14 +815,14 @@ chess_value_t chess_promote_pawn(chess_game_t* game, chess_value_t index, chess_
     }
     clear_en_passant_target(game, index);
     game->board[index] = CHESS_ID(team, new_type);
-    return 1;
+    return CHESS_SUCCESS;
 }
-chess_value_t chess_index_name(int index, char* out_buffer) {
+chess_result_t chess_index_name(chess_index_t index, char* out_buffer) {
     if (index < 0 || index > 63 || out_buffer == NULL) {
-        return 0;
+        return CHESS_INVALID;
     }
     const chess_value_t x = index % 8;
     const chess_value_t y = (7 - index / 8) + 1;
     sprintf(out_buffer, "%c%d", x + 'a', y);
-    return 1;
+    return CHESS_SUCCESS;
 }
