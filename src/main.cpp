@@ -318,9 +318,9 @@ template <typename ControlSurfaceType>
 class chess_board : public control<ControlSurfaceType> {
     using base_type = control<ControlSurfaceType>;
     chess_game_t game;
-    signed char moves[64];
-    signed char moves_size;
-    int touched;
+    chess_value_t moves[64];
+    chess_value_t moves_size;
+    chess_value_t touched;
     spoint16 last_touch;
     
     int move_count;
@@ -426,7 +426,7 @@ class chess_board : public control<ControlSurfaceType> {
             for (int x = 0; x < extent; x += square_size.width) {
                 const srect16 square(spoint16(x, y), square_size);
                 if (square.intersects(clip)) {
-                    const signed char id = chess_index_to_id(&game,idx);
+                    const chess_value_t id = chess_index_to_id(&game,idx);
                     pixel_type px_bg = (i & 1) ? color_t::brown : color_t::tan;
                     pixel_type px_bd = (i & 1) ? color_t::gold : color_t::black;
                     if (id > -1 && CHESS_TYPE(id) == CHESS_KING && chess_status(&game,CHESS_TEAM(id)) == CHESS_CHECK) {
@@ -461,9 +461,9 @@ class chess_board : public control<ControlSurfaceType> {
             const srect16 square(spoint16::zero(), ssize16(extent / 8, extent / 8));
             int sq = point_to_square(*locations);
             if (sq > -1) {
-                const signed char id = chess_index_to_id(&game,sq);
+                const chess_value_t id = chess_index_to_id(&game,sq);
                 if (id > -1) {
-                    const signed char team = CHESS_TEAM(id);
+                    const chess_value_t team = CHESS_TEAM(id);
                     if (chess_turn(&game) == team) {
                         touched = sq;
                         moves_size = chess_compute_moves(&game,sq,moves);
@@ -488,7 +488,7 @@ class chess_board : public control<ControlSurfaceType> {
         if (touched > -1) {
             const signed char id = chess_index_to_id(&game,touched);
             const bool is_king = (CHESS_TYPE(id) == CHESS_KING);
-            const signed char team = CHESS_TEAM(id);
+            const chess_value_t team = CHESS_TEAM(id);
             const int16_t extent = this->dimensions().aspect_ratio() >= 1 ? this->dimensions().height : this->dimensions().width;
             const srect16 square(spoint16::zero(), ssize16(extent / 8, extent / 8));
             const int x = touched % 8 * (extent / 8), y = touched / 8 * (extent / 8);
@@ -502,6 +502,13 @@ class chess_board : public control<ControlSurfaceType> {
                 const int release_idx = point_to_square(last_touch);
                 if (release_idx != -1) {
                     if(chess_move(&game,touched,release_idx)) {
+                        char buf[3];
+                        chess_index_name(touched,buf);
+                        fputs("move: ",stdout);
+                        fputs(buf,stdout);
+                        fputs(" to ",stdout);
+                        chess_index_name(release_idx,buf);
+                        puts(buf);
                         srect16 sq_bnds;
                         square_coords(release_idx, &sq_bnds);
                         this->invalidate(sq_bnds);
