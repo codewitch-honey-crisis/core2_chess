@@ -378,18 +378,19 @@ class chess_board : public control<ControlSurfaceType> {
         board[6] = CHESS_ID(0, CHESS_KNIGHT);
         board[2] = CHESS_ID(0, CHESS_BISHOP);
         board[5] = CHESS_ID(0, CHESS_BISHOP);
-        board[3] = CHESS_ID(0, CHESS_QUEEN);
-        board[4] = CHESS_ID(0, CHESS_KING);
-        kings[0] = 4;
+        board[3] = CHESS_ID(0, CHESS_KING);
+        kings[0] = 3;
+        board[4] = CHESS_ID(0, CHESS_QUEEN);
+        
         board[56 + 0] = CHESS_ID(1, CHESS_ROOK);
         board[56 + 7] = CHESS_ID(1, CHESS_ROOK);
         board[56 + 1] = CHESS_ID(1, CHESS_KNIGHT);
         board[56 + 6] = CHESS_ID(1, CHESS_KNIGHT);
         board[56 + 2] = CHESS_ID(1, CHESS_BISHOP);
         board[56 + 5] = CHESS_ID(1, CHESS_BISHOP);
-        board[56 + 3] = CHESS_ID(1, CHESS_KING);
-        kings[1] = 56 + 3;
-        board[56 + 4] = CHESS_ID(1, CHESS_QUEEN);
+        board[56 + 3] = CHESS_ID(1, CHESS_QUEEN);
+        board[56 + 4] = CHESS_ID(1, CHESS_KING);
+        kings[1] = 56 + 4;
         touched = -1;
     }
     int id_to_index(int id) {
