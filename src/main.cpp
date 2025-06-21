@@ -53,7 +53,7 @@
 #include "esp_vfs_fat.h"
 #define CB24_IMPLEMENTATION
 #include "assets/cb24.hpp"
-
+#include "chess.h"
 // namespace imports
 #ifdef ARDUINO
 using namespace arduino;  // devices
@@ -313,388 +313,23 @@ static void spiffs_init() {
 }
 
 static screen_t main_screen;
-typedef enum {
-    CHESS_PAWN = 0,
-    CHESS_BISHOP = 1,
-    CHESS_ROOK = 2,
-    CHESS_KNIGHT = 3,
-    CHESS_QUEEN = 4,
-    CHESS_KING = 5
-} chess_piece_type_t;
-#define CHESS_TEAM(x) (!!(x & (1 << 3)))
-#define CHESS_TYPE(x) ((chess_piece_type_t)(x & 7))
-#define CHESS_ID(x, y) ((x ? (1 << 3) : (0 << 3)) | (int)y)
-#define CHESS_NONE (-1)
-typedef struct {
-    const int id;
-    const const_bitmap<alpha_pixel<CB24_BIT_DEPTH>>& icon;
-} chess_piece_t;
-
-static const chess_piece_t chess_pieces[] = {
-    {CHESS_ID(0, CHESS_PAWN), cb24_chess_pawn},
-    {CHESS_ID(0, CHESS_BISHOP), cb24_chess_bishop},
-    {CHESS_ID(0, CHESS_ROOK), cb24_chess_rook},
-    {CHESS_ID(0, CHESS_KNIGHT), cb24_chess_knight},
-    {CHESS_ID(0, CHESS_QUEEN), cb24_chess_queen},
-    {CHESS_ID(0, CHESS_KING), cb24_chess_king},
-    {CHESS_ID(1, CHESS_PAWN), cb24_chess_pawn},
-    {CHESS_ID(1, CHESS_BISHOP), cb24_chess_bishop},
-    {CHESS_ID(1, CHESS_ROOK), cb24_chess_rook},
-    {CHESS_ID(1, CHESS_KNIGHT), cb24_chess_knight},
-    {CHESS_ID(1, CHESS_QUEEN), cb24_chess_queen},
-    {CHESS_ID(1, CHESS_KING), cb24_chess_king}};
-#define CHESS_ID_TO_PIECE(x) (chess_pieces[CHESS_TEAM(x) * 6 + CHESS_TYPE(x)])
-
 
 template <typename ControlSurfaceType>
 class chess_board : public control<ControlSurfaceType> {
     using base_type = control<ControlSurfaceType>;
-    int board[64];
-    int moves[64];
-    int moves_size;
-    int check_moves[64];
-    int check_moves_size;
+    chess_game_t game;
+    signed char moves[64];
+    signed char moves_size;
     int touched;
     spoint16 last_touch;
-    int turn;
-    int check;
-    int kings[2];
+    
     int move_count;
     void init_board() {
-        turn = 0;
-        check = -1;
+        chess_init(&game);
         moves_size = 0;
-        move_count = 0;
-        for (int i = 0; i < 64; ++i) {
-            board[i] = -1;
-        }
-        for (int i = 0; i < 8; ++i) {
-            board[8 + i] = CHESS_ID(0, CHESS_PAWN);
-            board[48 + i] = CHESS_ID(1, CHESS_PAWN);
-        }
-        board[0] = CHESS_ID(0, CHESS_ROOK);
-        board[7] = CHESS_ID(0, CHESS_ROOK);
-        board[1] = CHESS_ID(0, CHESS_KNIGHT);
-        board[6] = CHESS_ID(0, CHESS_KNIGHT);
-        board[2] = CHESS_ID(0, CHESS_BISHOP);
-        board[5] = CHESS_ID(0, CHESS_BISHOP);
-        board[3] = CHESS_ID(0, CHESS_KING);
-        kings[0] = 3;
-        board[4] = CHESS_ID(0, CHESS_QUEEN);
-        
-        board[56 + 0] = CHESS_ID(1, CHESS_ROOK);
-        board[56 + 7] = CHESS_ID(1, CHESS_ROOK);
-        board[56 + 1] = CHESS_ID(1, CHESS_KNIGHT);
-        board[56 + 6] = CHESS_ID(1, CHESS_KNIGHT);
-        board[56 + 2] = CHESS_ID(1, CHESS_BISHOP);
-        board[56 + 5] = CHESS_ID(1, CHESS_BISHOP);
-        board[56 + 3] = CHESS_ID(1, CHESS_QUEEN);
-        board[56 + 4] = CHESS_ID(1, CHESS_KING);
-        kings[1] = 56 + 4;
         touched = -1;
     }
-    int id_to_index(int id) {
-        for (int i = 0; i < 64; ++i) {
-            if (id == board[i]) {
-                return i;
-            }
-        }
-        return -1;
-    }
-    void compute_checked_team() {
-        int tmp_moves[64];
-        for (int i = 0; i < 64; ++i) {
-            if (board[i] != -1) {
-                const int board_id = board[i];
-                const int board_team = CHESS_TEAM(board_id);
-                const int sz = compute_moves(i, tmp_moves, board);
-                for (int j = 0; j < sz; ++j) {
-                    int move_id = board[tmp_moves[j]];
-                    if (CHESS_TEAM(move_id) != board_team && CHESS_TYPE(move_id) == CHESS_KING) {
-                        check = CHESS_TEAM(move_id);
-                        return;
-                    }
-                }
-            }
-        }
-        check = -1;
-    }
-    bool is_checked_king(int king_index, const int* game_board) {
-        int tmp_moves[64];
-        int result = 0;
-        if (king_index == -1) {
-            return false;
-        }
-        const int id = game_board[king_index];
-        if (id == -1) {
-            return false;
-        }
-        const int team = CHESS_TEAM(id);
-        int c = 0;
-        for (int i = 0; i < 64; ++i) {
-            const int id_cmp = game_board[i];
-            if (id_cmp != -1) {
-                const int team_cmp = CHESS_TEAM(id_cmp);
-                if (team_cmp != team) {
-                    // found an opposing piece on the board
-                    const int tmp_moves_size = compute_moves(i, tmp_moves, game_board);
-                    if (contains_move(tmp_moves, tmp_moves_size, king_index)) {
-                        return true;
-                    }
-                }
-            }
-        }
-        return false;
-    }
-    int compute_check_moves(int index, int checked_king_index, const int* game_board, int* out_moves) {
-        int tmp_moves[64];
-        int tmp_board[64];
-        int result = 0;
-        const int id = game_board[index];
-        const int checked_king_id = game_board[checked_king_index];
-        if (CHESS_KING != CHESS_TYPE(checked_king_id)) {
-            return 0;
-        }
-        if (CHESS_TEAM(checked_king_id) != CHESS_TEAM(id)) {
-            return 0;
-        }
-        int tmp_moves_sz = compute_moves(index, tmp_moves, game_board);
-        for (int i = 0; i < tmp_moves_sz; ++i) {
-            memcpy(tmp_board, game_board, sizeof(tmp_board));
-            tmp_board[index] = -1;
-            tmp_board[tmp_moves[i]] = id;
-            if (CHESS_KING == CHESS_TYPE(id)) {
-                if (!is_checked_king(tmp_moves[i], tmp_board)) {
-                    out_moves[result++] = tmp_moves[i];
-                }
-            } else {
-                if (!is_checked_king(checked_king_index, tmp_board)) {
-                    out_moves[result++] = tmp_moves[i];
-                }
-            }
-        }
-        return result;
-    }
-    void eliminate_checked_moves(int index, const int* game_board, int* in_out_moves, int* in_out_moves_size) {
-        if (index == -1) {
-            return;
-        }
-        int tmp_board[64];
-        const int id = game_board[index];
-        const int team = CHESS_TEAM(id);
-        const int type = CHESS_TYPE(id);
-        if (kings[team] != index) {  // other piece
-            const int king_index = kings[team];
-            for (int i = 0; i < *(in_out_moves_size); ++i) {
-                memcpy(tmp_board, game_board, sizeof(tmp_board));
-                tmp_board[index] = -1;
-                tmp_board[in_out_moves[i]] = id;
-                if (is_checked_king(king_index, tmp_board)) {
-                    for (int j = i; j < (*in_out_moves_size) - 1; ++j) {
-                        in_out_moves[j] = in_out_moves[j + 1];
-                    }
-                    --(*in_out_moves_size);
-                    --i;
-                }
-            }
-        } else {  // king piece
-            const int king_index = index;
-            const int king_id = game_board[king_index];
-            for (int i = 0; i < (*in_out_moves_size); ++i) {
-                memcpy(tmp_board, game_board, sizeof(tmp_board));
-                tmp_board[king_index] = -1;
-                const int move = in_out_moves[i];
-                tmp_board[move] = king_id;
-                if (is_checked_king(move, tmp_board)) {
-                    for (int j = i; j < (*in_out_moves_size) - 1; ++j) {
-                        in_out_moves[j] = in_out_moves[j + 1];
-                    }
-                    --(*in_out_moves_size);
-                    --i;
-                }
-            }
-        }
-    }
-    int compute_moves(int index, int* out_moves, const int* game_board) {
-        const int id = game_board[index];
-        if (id == -1) {
-            return 0;
-        }
-        const int type = CHESS_TYPE(id);
-        const int team = CHESS_TEAM(id);
-        int result = 0;
-        switch (type) {
-            case CHESS_PAWN:
-                if ((team == 0 && index < 16) || (team == 1 && index > (64 - 16))) {  // the pawn is on its first move
-                    int tmp = index_advance(team, index);
-                    if (tmp != -1) {
-                        out_moves[result++] = tmp;
-                        int attack = index_left(team, tmp);
-                        if (attack != -1 && game_board[attack] != -1 && CHESS_TEAM(game_board[attack]) != team) {
-                            out_moves[result++] = attack;
-                        }
-                        attack = index_right(team, tmp);
-                        if (attack != -1 && game_board[attack] != -1 && CHESS_TEAM(game_board[attack]) != team) {
-                            out_moves[result++] = attack;
-                        }
-                    }
-                    tmp = index_advance(team, tmp);
-                    if (tmp != -1) {
-                        out_moves[result++] = tmp;
-                    }
-                } else {
-                    int tmp = index_advance(team, index);
-                    if (tmp != -1) {
-                        out_moves[result++] = tmp;
-                        int attack = index_left(team, tmp);
-                        if (attack != -1 && game_board[attack] != -1 && CHESS_TEAM(game_board[attack]) != team) {
-                            out_moves[result++] = attack;
-                        }
-                        attack = index_right(team, tmp);
-                        if (attack != -1 && game_board[attack] != -1 && CHESS_TEAM(game_board[attack]) != team) {
-                            out_moves[result++] = attack;
-                        }
-                    }
-                }
-                break;
-            case CHESS_KNIGHT: {
-                int i1 = index_advance(team, index);
-                int i2 = index_advance(team, i1);
-                const int l2 = index_left(team, i2);
-                const int r2 = index_right(team, i2);
-                int tmp = index_left(team, i1);
-                const int l1 = index_left(team, tmp);
-                tmp = index_right(team, i1);
-                const int r1 = index_right(team, tmp);
 
-                i1 = index_retreat(team, index);
-                i2 = index_retreat(team, i1);
-                const int l4 = index_left(team, i2);
-                const int r4 = index_right(team, i2);
-                tmp = index_left(team, i1);
-                const int l3 = index_left(team, tmp);
-                tmp = index_right(team, i1);
-                const int r3 = index_right(team, tmp);
-
-                tmp = l1;
-                if (tmp != -1 && (game_board[tmp] == -1 || CHESS_TEAM(game_board[tmp]) != team)) {
-                    out_moves[result++] = tmp;
-                }
-                tmp = l2;
-                if (tmp != -1 && (game_board[tmp] == -1 || CHESS_TEAM(game_board[tmp]) != team)) {
-                    out_moves[result++] = tmp;
-                }
-                tmp = r1;
-                if (tmp != -1 && (game_board[tmp] == -1 || CHESS_TEAM(game_board[tmp]) != team)) {
-                    out_moves[result++] = tmp;
-                }
-                tmp = r2;
-                if (tmp != -1 && (game_board[tmp] == -1 || CHESS_TEAM(game_board[tmp]) != team)) {
-                    out_moves[result++] = tmp;
-                }
-
-                tmp = l3;
-                if (tmp != -1 && (game_board[tmp] == -1 || CHESS_TEAM(game_board[tmp]) != team)) {
-                    out_moves[result++] = tmp;
-                }
-                tmp = l4;
-                if (tmp != -1 && (game_board[tmp] == -1 || CHESS_TEAM(game_board[tmp]) != team)) {
-                    out_moves[result++] = tmp;
-                }
-                tmp = r3;
-                if (tmp != -1 && (game_board[tmp] == -1 || CHESS_TEAM(game_board[tmp]) != team)) {
-                    out_moves[result++] = tmp;
-                }
-                tmp = r4;
-                if (tmp != -1 && (game_board[tmp] == -1 || CHESS_TEAM(game_board[tmp]) != team)) {
-                    out_moves[result++] = tmp;
-                }
-            } break;
-            case CHESS_BISHOP: {
-                move_until_obstacle(index_advance_left, team, index, game_board, out_moves, &result);
-                move_until_obstacle(index_advance_right, team, index, game_board, out_moves, &result);
-                move_until_obstacle(index_retreat_left, team, index, game_board, out_moves, &result);
-                move_until_obstacle(index_retreat_right, team, index, game_board, out_moves, &result);
-            } break;
-            case CHESS_ROOK: {
-                move_until_obstacle(index_advance, team, index, game_board, out_moves, &result);
-                move_until_obstacle(index_left, team, index, game_board, out_moves, &result);
-                move_until_obstacle(index_right, team, index, game_board, out_moves, &result);
-                move_until_obstacle(index_retreat, team, index, game_board, out_moves, &result);
-            } break;
-            case CHESS_QUEEN: {
-                move_until_obstacle(index_advance, team, index, game_board, out_moves, &result);
-                move_until_obstacle(index_left, team, index, game_board, out_moves, &result);
-                move_until_obstacle(index_right, team, index, game_board, out_moves, &result);
-                move_until_obstacle(index_retreat, team, index, game_board, out_moves, &result);
-
-                move_until_obstacle(index_advance_left, team, index, game_board, out_moves, &result);
-                move_until_obstacle(index_advance_right, team, index, game_board, out_moves, &result);
-                move_until_obstacle(index_retreat_left, team, index, game_board, out_moves, &result);
-                move_until_obstacle(index_retreat_right, team, index, game_board, out_moves, &result);
-            } break;
-            case CHESS_KING: {
-                int i = index;
-                if (i != -1) {
-                    i = index_advance(team, i);
-                    if (i != -1 && (game_board[i] == -1 || CHESS_TEAM(game_board[i]) != team)) {
-                        out_moves[result++] = i;
-                    }
-                }
-                i = index;
-                if (i != -1) {
-                    i = index_advance_left(team, i);
-                    if (i != -1 && (game_board[i] == -1 || CHESS_TEAM(game_board[i]) != team)) {
-                        out_moves[result++] = i;
-                    }
-                }
-                i = index;
-                if (i != -1) {
-                    i = index_advance_right(team, i);
-                    if (i != -1 && (game_board[i] == -1 || CHESS_TEAM(game_board[i]) != team)) {
-                        out_moves[result++] = i;
-                    }
-                }
-                i = index;
-                if (i != -1) {
-                    i = index_left(team, i);
-                    if (i != -1 && (game_board[i] == -1 || CHESS_TEAM(game_board[i]) != team)) {
-                        out_moves[result++] = i;
-                    }
-                }
-                i = index;
-                if (i != -1) {
-                    i = index_right(team, i);
-                    if (i != -1 && (game_board[i] == -1 || CHESS_TEAM(game_board[i]) != team)) {
-                        out_moves[result++] = i;
-                    }
-                }
-                i = index;
-                if (i != -1) {
-                    i = index_retreat(team, i);
-                    if (i != -1 && (game_board[i] == -1 || CHESS_TEAM(game_board[i]) != team)) {
-                        out_moves[result++] = i;
-                    }
-                }
-                i = index;
-                if (i != -1) {
-                    i = index_retreat_left(team, i);
-                    if (i != -1 && (game_board[i] == -1 || CHESS_TEAM(game_board[i]) != team)) {
-                        out_moves[result++] = i;
-                    }
-                }
-                i = index;
-                if (i != -1) {
-                    i = index_retreat_right(team, i);
-                    if (i != -1 && (game_board[i] == -1 || CHESS_TEAM(game_board[i]) != team)) {
-                        out_moves[result++] = i;
-                    }
-                }
-
-            } break;
-        }
-        return result;
-    }
     int point_to_square(spoint16 point) {
         const int16_t extent = this->dimensions().aspect_ratio() >= 1 ? this->dimensions().height : this->dimensions().width;
         const int x = point.x / (extent / 8);
@@ -708,155 +343,6 @@ class chess_board : public control<ControlSurfaceType> {
         const int y = index / 8;
         const spoint16 origin(x * (extent / 8), y * (extent / 8));
         *out_rect = srect16(origin, square_size);
-    }
-    static bool contains_move(int* moves, int moves_size, int index) {
-        for (int i = 0; i < moves_size; ++i) {
-            if (moves[i] == index) {
-                return true;
-            }
-        }
-        return false;
-    }
-    static void move_until_obstacle(int (*index_fn)(int team, int index), int team, int index, const int* game_board, int* out_moves, int* out_size) {
-        int i = index;
-        while (true) {
-            i = index_fn(team, i);
-            if (i != -1) {
-                if (game_board[i] != -1) {
-                    if (CHESS_TEAM(game_board[i]) == team) {
-                        return;
-                    }
-                    out_moves[(*out_size)++] = i;
-                    return;
-                } else {
-                    out_moves[(*out_size)++] = i;
-                }
-            } else {
-                break;
-            }
-        }
-    }
-    static int index_advance(int team, int index) {
-        if (index == -1) return -1;
-        if (team == 0) {
-            index += 8;
-        } else if (team == 1) {
-            index -= 8;
-        }
-        if (index < 0 || index > 63) return -1;
-        return index;
-    }
-    static int index_advance_left(int team, int index) {
-        if (index == -1) return -1;
-        const int x = index % 8;
-        if (team == 0) {
-            if (x == 7 || index + 8 > 63) {
-                return -1;
-            }
-            index += 9;
-        } else if (team == 1) {
-            if (x == 0 || index - 9 < 0) {
-                return -1;
-            }
-            index -= 9;
-        }
-        if (index < 0 || index > 63) return -1;
-        return index;
-    }
-    static int index_advance_right(int team, int index) {
-        if (index == -1) return -1;
-        const int x = index % 8;
-        if (team == 0) {
-            if (x == 0 || index + 7 > 63) {
-                return -1;
-            }
-            index += 7;
-        } else if (team == 1) {
-            if (x == 7 || index - 7 < 0) {
-                return -1;
-            }
-            index -= 7;
-        }
-        if (index < 0 || index > 63) return -1;
-        return index;
-    }
-    static int index_retreat_left(int team, int index) {
-        if (index == -1) return -1;
-        const int x = index % 8;
-        if (team == 0) {
-            if (x == 7 || index - 7 < 0) {
-                return -1;
-            }
-            index -= 7;
-        } else if (team == 1) {
-            if (x == 0 || index + 7 > 63) {
-                return -1;
-            }
-            index += 7;
-        }
-        if (index < 0 || index > 63) return -1;
-        return index;
-    }
-    static int index_retreat_right(int team, int index) {
-        if (index == -1) return -1;
-        const int x = index % 8;
-        if (team == 0) {
-            if (x == 0 || index - 9 < 0) {
-                return -1;
-            }
-            index -= 9;
-        } else if (team == 1) {
-            if (x == 7 || index + 9 > 63) {
-                return -1;
-            }
-            index += 9;
-        }
-        if (index < 0 || index > 63) return -1;
-        return index;
-    }
-    static int index_retreat(int team, int index) {
-        if (index == -1) return -1;
-        if (team == 1) {
-            index += 8;
-        } else if (team == 0) {
-            index -= 8;
-        }
-        if (index < 0 || index > 63) return -1;
-        return index;
-    }
-    static int index_left(int team, int index) {
-        if (index == -1) return -1;
-        const int x = index % 8;
-        if (team == 0) {
-            if (x == 7) {
-                return -1;
-            }
-            index += 1;
-        } else if (team == 1) {
-            if (x == 0) {
-                return -1;
-            }
-            index -= 1;
-        }
-        if (index < 0 || index > 63) return -1;
-        return index;
-    }
-    static int index_right(int team, int index) {
-        if (index == -1) return -1;
-        const int x = index % 8;
-        if (team == 1) {
-            if (x == 7) {
-                return -1;
-            }
-            index += 1;
-        } else if (team == 0) {
-            if (x == 0) {
-                return -1;
-            }
-            index -= 1;
-        }
-        if (index < 0 || index > 63) return -1;
-        return index;
     }
     static const const_bitmap<alpha_pixel<4>>& chess_icon(int id) {
         const int type = CHESS_TYPE(id);
@@ -922,13 +408,11 @@ class chess_board : public control<ControlSurfaceType> {
         do_copy_control(rhs);
     }
     void do_copy_control(chess_board& rhs) {
-        memcpy(board, rhs.board, 64 * sizeof(int));
-        memcpy(board, rhs.board, 64 * sizeof(int));
+        memcpy(&game, &rhs.game, sizeof(game));
         if (rhs.moves_size) {
             memcpy(moves, rhs.moves, rhs.moves_size * sizeof(int));
         }
         moves_size = rhs.moves_size;
-        turn = rhs.turn;
         move_count = rhs.move_count;
         last_touch = rhs.last_touch;
     }
@@ -942,13 +426,13 @@ class chess_board : public control<ControlSurfaceType> {
             for (int x = 0; x < extent; x += square_size.width) {
                 const srect16 square(spoint16(x, y), square_size);
                 if (square.intersects(clip)) {
-                    const int id = board[idx];
+                    const signed char id = chess_index_to_id(&game,idx);
                     pixel_type px_bg = (i & 1) ? color_t::brown : color_t::tan;
                     pixel_type px_bd = (i & 1) ? color_t::gold : color_t::black;
-                    if (id > -1 && check == CHESS_TEAM(id) && CHESS_TYPE(id) == CHESS_KING) {
+                    if (id > -1 && CHESS_TYPE(id) == CHESS_KING && chess_status(&game,CHESS_TEAM(id)) == CHESS_CHECK) {
                         px_bd = color_t::red;
                     }
-                    if (touched == idx || contains_move(moves, moves_size, idx)) {
+                    if (touched == idx || chess_contains_move(moves, moves_size, idx)) {
                         px_bg = color_t::light_blue;
                         px_bd = color_t::cornflower_blue;
                     }
@@ -977,17 +461,12 @@ class chess_board : public control<ControlSurfaceType> {
             const srect16 square(spoint16::zero(), ssize16(extent / 8, extent / 8));
             int sq = point_to_square(*locations);
             if (sq > -1) {
-                const int id = board[sq];
+                const signed char id = chess_index_to_id(&game,sq);
                 if (id > -1) {
-                    const int team = CHESS_TEAM(id);
-                    if (turn == team) {
+                    const signed char team = CHESS_TEAM(id);
+                    if (chess_turn(&game) == team) {
                         touched = sq;
-                        if (is_checked_king(kings[team], board)) {
-                            moves_size = compute_check_moves(sq, kings[team], board, moves);
-                        } else {
-                            moves_size = compute_moves(touched, moves, board);
-                            eliminate_checked_moves(touched, board, moves, &moves_size);
-                        }
+                        moves_size = chess_compute_moves(&game,sq,moves);
                         srect16 sq_bnds;
                         square_coords(sq, &sq_bnds);
                         this->invalidate(sq_bnds);
@@ -1007,9 +486,9 @@ class chess_board : public control<ControlSurfaceType> {
     }
     void on_release() override {
         if (touched > -1) {
-            const int id = board[touched];
+            const signed char id = chess_index_to_id(&game,touched);
             const bool is_king = (CHESS_TYPE(id) == CHESS_KING);
-            const int team = CHESS_TEAM(id);
+            const signed char team = CHESS_TEAM(id);
             const int16_t extent = this->dimensions().aspect_ratio() >= 1 ? this->dimensions().height : this->dimensions().width;
             const srect16 square(spoint16::zero(), ssize16(extent / 8, extent / 8));
             const int x = touched % 8 * (extent / 8), y = touched / 8 * (extent / 8);
@@ -1022,26 +501,14 @@ class chess_board : public control<ControlSurfaceType> {
                 }
                 const int release_idx = point_to_square(last_touch);
                 if (release_idx != -1) {
-                    if (release_idx != touched) {
-                        if (is_king) {
-                            kings[team] = release_idx;
-                        }
-                        for (int i = 0; i < moves_size; ++i) {
-                            if (release_idx == moves[i]) {
-                                board[release_idx] = board[touched];
-                                board[touched] = -1;
-                                ++turn;
-                                if (turn > 1) {
-                                    turn = 0;
-                                }
-                                ++move_count;
-                                break;
-                            }
-                        }
+                    if(chess_move(&game,touched,release_idx)) {
+                        srect16 sq_bnds;
+                        square_coords(release_idx, &sq_bnds);
+                        this->invalidate(sq_bnds);
                     }
                 }
+                moves_size = 0;
             }
-            moves_size = 0;
         }
         touched = -1;
     }
