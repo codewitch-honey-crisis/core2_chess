@@ -427,7 +427,7 @@ class chess_board : public control<ControlSurfaceType> {
                 const srect16 square(spoint16(x, y), square_size);
                 if (square.intersects(clip)) {
                     const chess_value_t id = chess_index_to_id(&game,idx);
-                    pixel_type px_bg = (i & 1) ? color_t::brown : color_t::tan;
+                    pixel_type px_bg = (i & 1) ? color_t::brown : color_t::dark_khaki;
                     pixel_type px_bd = (i & 1) ? color_t::gold : color_t::black;
                     if (id > -1 && CHESS_TYPE(id) == CHESS_KING && chess_status(&game,CHESS_TEAM(id)) == CHESS_CHECK) {
                         px_bd = color_t::red;
@@ -501,7 +501,8 @@ class chess_board : public control<ControlSurfaceType> {
                 }
                 const int release_idx = point_to_square(last_touch);
                 if (release_idx != -1) {
-                    if(chess_move(&game,touched,release_idx)) {
+                    chess_value_t mv = chess_move(&game,touched,release_idx);
+                    if(mv!=-2) {
                         char buf[3];
                         chess_index_name(touched,buf);
                         fputs("move: ",stdout);
@@ -512,6 +513,10 @@ class chess_board : public control<ControlSurfaceType> {
                         srect16 sq_bnds;
                         square_coords(release_idx, &sq_bnds);
                         this->invalidate(sq_bnds);
+                        if(mv!=-1 && mv!=release_idx) { // en passant
+                            square_coords(mv,&sq_bnds);
+                            this->invalidate(sq_bnds);
+                        }
                     }
                 }
                 moves_size = 0;

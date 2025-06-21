@@ -1,4 +1,5 @@
 #include "chess.h"
+
 #include <memory.h>
 #include <stdio.h>
 #ifndef NULL
@@ -145,7 +146,57 @@ static chess_value_t index_right(chess_value_t team, chess_value_t index) {
     if (index < 0 || index > 63) return -1;
     return index;
 }
-static chess_value_t compute_moves(chess_value_t index, chess_value_t* out_moves, const chess_value_t* game_board) {
+static void add_en_passant_target(chess_game_t* game, chess_value_t index) {
+    for (int i = 0; i < 16; ++i) {
+        if (game->en_passant_targets[i] == -1) {
+            game->en_passant_targets[i] = index;
+            return;
+        }
+    }
+}
+static void clear_en_passant_target(chess_game_t* game, chess_value_t index) {
+    for (int i = 0; i < 16; ++i) {
+        if (game->en_passant_targets[i] == index) {
+            game->en_passant_targets[i] = -1;
+            return;
+        }
+    }
+}
+static chess_value_t is_en_passant_target(const chess_game_t* game, chess_value_t index) {
+    for (int i = 0; i < 16; ++i) {
+        if (game->en_passant_targets[i] == index) {
+            return 1;
+        }
+    }
+    return 0;
+}
+static chess_value_t en_passant_target_from_move(const chess_game_t* game, chess_value_t index_from, chess_value_t index_to, const chess_value_t* game_board) {
+    if (game == NULL || index_from < 0 || index_from > 63 || index_to < 0 || index_to > 63 || game_board[index_from] == -1) {
+        return -1;
+    }
+    const chess_value_t id = game_board[index_from];
+    const chess_value_t team = CHESS_TEAM(id);
+    chess_value_t tmp = index_advance_left(team, index_from);
+    if (tmp != index_to) {
+        tmp = index_advance_right(team, index_from);
+        if (tmp != index_to) {
+            return -1;
+        }
+    }
+    tmp = index_retreat(team, tmp);
+    if (tmp == -1) {
+        return -1;
+    }  // shouldn't happen
+    const chess_value_t id_cmp = game_board[tmp];
+    if (id_cmp == -1) return -1;
+    const chess_type_t type_cmp = CHESS_TYPE(id_cmp);
+    const chess_value_t team_cmp = CHESS_TEAM(id_cmp);
+    if (type_cmp != CHESS_PAWN || team_cmp == team) {
+        return -1;
+    }
+    return is_en_passant_target(game, tmp) ? tmp : -1;
+}
+static chess_value_t compute_moves(const chess_game_t* game, chess_value_t index, chess_value_t* out_moves, const chess_value_t* game_board) {
     const chess_value_t id = game_board[index];
     if (id == -1) {
         return 0;
@@ -157,8 +208,8 @@ static chess_value_t compute_moves(chess_value_t index, chess_value_t* out_moves
         case CHESS_PAWN:
             if ((team == 0 && index < 16) || (team == 1 && index > (64 - 16))) {  // the pawn is on its first move
                 chess_value_t tmp = index_advance(team, index);
-                if(tmp!=-1) {
-                    if(game_board[tmp]==-1) {
+                if (tmp != -1) {
+                    if (game_board[tmp] == -1) {
                         out_moves[result++] = tmp;
                     }
                     chess_value_t attack = index_advance_left(team, index);
@@ -169,11 +220,11 @@ static chess_value_t compute_moves(chess_value_t index, chess_value_t* out_moves
                     if (attack != -1 && game_board[attack] != -1 && CHESS_TEAM(game_board[attack]) != team) {
                         out_moves[result++] = attack;
                     }
-                    if(game_board[tmp]==-1) {
+                    if (game_board[tmp] == -1) {
                         const chess_value_t tmp2 = index_advance(team, tmp);
-                        if(tmp2!=-1 && game_board[tmp2]==-1) {
+                        if (tmp2 != -1 && game_board[tmp2] == -1) {
                             out_moves[result++] = tmp2;
-                        }    
+                        }
                     }
                     attack = index_advance_left(team, tmp);
                     if (attack != -1 && game_board[attack] != -1 && CHESS_TEAM(game_board[attack]) != team) {
@@ -187,7 +238,7 @@ static chess_value_t compute_moves(chess_value_t index, chess_value_t* out_moves
             } else {
                 chess_value_t tmp = index_advance(team, index);
                 if (tmp != -1) {
-                    if(game_board[tmp]==-1) {
+                    if (game_board[tmp] == -1) {
                         out_moves[result++] = tmp;
                     }
                     chess_value_t attack = index_advance_left(team, index);
@@ -199,7 +250,27 @@ static chess_value_t compute_moves(chess_value_t index, chess_value_t* out_moves
                         out_moves[result++] = attack;
                     }
                 }
+                // check for en passant capture moves
+                int tmp2 = index_left(team, index);
+                if (tmp2 != -1 && game_board[tmp2] != -1 && CHESS_TEAM(game_board[tmp2]) != team) {
+                    if (is_en_passant_target(game, tmp2)) {
+                        tmp2 = index_advance_left(team, index);
+                        if (tmp2 != -1 && game_board[tmp2] == -1) {
+                            out_moves[result++] = tmp2;
+                        }
+                    }
+                }
+                tmp2 = index_right(team, index);
+                if (tmp2 != -1 && game_board[tmp2] != -1 && CHESS_TEAM(game_board[tmp2]) != team) {
+                    if (is_en_passant_target(game, tmp2)) {
+                        tmp2 = index_advance_right(team, index);
+                        if (tmp2 != -1 && game_board[tmp2] == -1) {
+                            out_moves[result++] = tmp2;
+                        }
+                    }
+                }
             }
+
             break;
         case CHESS_KNIGHT: {
             chess_value_t i1 = index_advance(team, index);
@@ -346,7 +417,7 @@ chess_value_t chess_contains_move(const chess_value_t* moves, chess_value_t move
     }
     return 0;
 }
-static chess_value_t is_checked_king(chess_value_t king_index, const chess_value_t* game_board) {
+static chess_value_t is_checked_king(const chess_game_t* game, chess_value_t king_index, const chess_value_t* game_board) {
     chess_value_t tmp_moves[64];
     chess_value_t result = 0;
     if (king_index == -1) {
@@ -364,7 +435,7 @@ static chess_value_t is_checked_king(chess_value_t king_index, const chess_value
             const chess_value_t team_cmp = CHESS_TEAM(id_cmp);
             if (team_cmp != team) {
                 // found an opposing piece on the board
-                const chess_value_t tmp_moves_size = compute_moves(i, tmp_moves, game_board);
+                const chess_value_t tmp_moves_size = compute_moves(game, i, tmp_moves, game_board);
                 if (chess_contains_move(tmp_moves, tmp_moves_size, king_index)) {
                     return 1;
                 }
@@ -373,7 +444,7 @@ static chess_value_t is_checked_king(chess_value_t king_index, const chess_value
     }
     return 0;
 }
-static chess_value_t compute_check_moves(chess_value_t index, chess_value_t checked_king_index, const chess_value_t* game_board, chess_value_t* out_moves) {
+static chess_value_t compute_check_moves(const chess_game_t* game, chess_value_t index, chess_value_t checked_king_index, const chess_value_t* game_board, chess_value_t* out_moves) {
     chess_value_t tmp_moves[64];
     chess_value_t tmp_board[64];
     chess_value_t result = 0;
@@ -385,24 +456,24 @@ static chess_value_t compute_check_moves(chess_value_t index, chess_value_t chec
     if (CHESS_TEAM(checked_king_id) != CHESS_TEAM(id)) {
         return 0;
     }
-    chess_value_t tmp_moves_sz = compute_moves(index, tmp_moves, game_board);
+    chess_value_t tmp_moves_sz = compute_moves(game, index, tmp_moves, game_board);
     for (chess_value_t i = 0; i < tmp_moves_sz; ++i) {
         memcpy(tmp_board, game_board, sizeof(tmp_board));
         tmp_board[index] = -1;
         tmp_board[tmp_moves[i]] = id;
         if (CHESS_KING == CHESS_TYPE(id)) {
-            if (!is_checked_king(tmp_moves[i], tmp_board)) {
+            if (!is_checked_king(game, tmp_moves[i], tmp_board)) {
                 out_moves[result++] = tmp_moves[i];
             }
         } else {
-            if (!is_checked_king(checked_king_index, tmp_board)) {
+            if (!is_checked_king(game, checked_king_index, tmp_board)) {
                 out_moves[result++] = tmp_moves[i];
             }
         }
     }
     return result;
 }
-static void eliminate_checked_moves(chess_value_t index, const chess_value_t* kings, const chess_value_t* game_board, chess_value_t* in_out_moves, chess_value_t* in_out_moves_size) {
+static void eliminate_checked_moves(const chess_game_t* game, chess_value_t index, const chess_value_t* kings, const chess_value_t* game_board, chess_value_t* in_out_moves, chess_value_t* in_out_moves_size) {
     if (index == -1) {
         return;
     }
@@ -416,7 +487,7 @@ static void eliminate_checked_moves(chess_value_t index, const chess_value_t* ki
             memcpy(tmp_board, game_board, sizeof(tmp_board));
             tmp_board[index] = -1;
             tmp_board[in_out_moves[i]] = id;
-            if (is_checked_king(king_index, tmp_board)) {
+            if (is_checked_king(game, king_index, tmp_board)) {
                 for (chess_value_t j = i; j < (*in_out_moves_size) - 1; ++j) {
                     in_out_moves[j] = in_out_moves[j + 1];
                 }
@@ -432,7 +503,7 @@ static void eliminate_checked_moves(chess_value_t index, const chess_value_t* ki
             tmp_board[king_index] = -1;
             const chess_value_t move = in_out_moves[i];
             tmp_board[move] = king_id;
-            if (is_checked_king(move, tmp_board)) {
+            if (is_checked_king(game, move, tmp_board)) {
                 for (chess_value_t j = i; j < (*in_out_moves_size) - 1; ++j) {
                     in_out_moves[j] = in_out_moves[j + 1];
                 }
@@ -446,10 +517,13 @@ void chess_init(chess_game_t* out_game) {
     out_game->turn = 0;
     out_game->no_castle[0] = 0;
     out_game->no_castle[1] = 0;
-    for (chess_value_t i = 0; i < 64; ++i) {
+    for (int i = 0; i < 16; ++i) {
+        out_game->en_passant_targets[i] = -1;
+    }
+    for (int i = 0; i < 64; ++i) {
         out_game->board[i] = -1;
     }
-    for (chess_value_t i = 0; i < 8; ++i) {
+    for (int i = 0; i < 8; ++i) {
         out_game->board[8 + i] = CHESS_ID(0, CHESS_PAWN);
         out_game->board[48 + i] = CHESS_ID(1, CHESS_PAWN);
     }
@@ -473,84 +547,84 @@ void chess_init(chess_game_t* out_game) {
     out_game->board[56 + 4] = CHESS_ID(1, CHESS_KING);
     out_game->kings[1] = 56 + 4;
 }
-static chess_value_t compute_castling(const chess_game_t* game,chess_value_t index, chess_value_t queen_side) {
+static chess_value_t compute_castling(const chess_game_t* game, chess_value_t index, chess_value_t queen_side) {
     // do not call if if not your turn.
     const chess_value_t id = game->board[index];
     const chess_type_t type = CHESS_TYPE(id);
     const chess_value_t team = CHESS_TEAM(id);
     chess_value_t index_other = -1;
-    if(type!=CHESS_KING && type!=CHESS_ROOK) {
+    if (type != CHESS_KING && type != CHESS_ROOK) {
         return -1;
     }
-    
-    if(game->no_castle[team]) {
+
+    if (game->no_castle[team]) {
         return -1;
     }
-    if(team==0) {
-        if(type==CHESS_KING) {
-            if(queen_side) {
-                index_other = 7; // the queen-side rook
+    if (team == 0) {
+        if (type == CHESS_KING) {
+            if (queen_side) {
+                index_other = 7;  // the queen-side rook
                 // no pieces between king and rook?
-                for(int i = index+1;i<index_other;++i) {
-                    if(game->board[i]!=-1) {
+                for (int i = index + 1; i < index_other; ++i) {
+                    if (game->board[i] != -1) {
                         return -1;
                     }
                 }
             } else {
                 index_other = 0;
                 // no pieces between king and rook?
-                for(int i = index_other+1;i<index;++i) {
-                    if(game->board[i]!=-1) {
+                for (int i = index_other + 1; i < index; ++i) {
+                    if (game->board[i] != -1) {
                         return -1;
                     }
                 }
             }
         } else {
-            queen_side = index==7;
-            index_other = 3; 
-            if(queen_side) {
-                for(int i = index_other+1;i<index;++i) {
-                    if(game->board[i]!=-1) {
+            queen_side = index == 7;
+            index_other = 3;
+            if (queen_side) {
+                for (int i = index_other + 1; i < index; ++i) {
+                    if (game->board[i] != -1) {
                         return -1;
                     }
                 }
             } else {
-                for(int i = index+1;i<index_other;++i) {
-                    if(game->board[i]!=-1) {
+                for (int i = index + 1; i < index_other; ++i) {
+                    if (game->board[i] != -1) {
                         return -1;
                     }
                 }
             }
         }
     } else {
-        if(type==CHESS_KING) {
-            if(queen_side) {
-                index_other = 56+0; // the queen-side rook
-                for(int i = index_other+1;i<index;++i) {
-                    if(game->board[i]!=-1) {
+        if (type == CHESS_KING) {
+            if (queen_side) {
+                index_other = 56 + 0;  // the queen-side rook
+                for (int i = index_other + 1; i < index; ++i) {
+                    if (game->board[i] != -1) {
                         return -1;
                     }
                 }
             } else {
-                index_other = 56+7;
-                for(int i = index+1;i<index_other;++i) {
-                    if(game->board[i]!=-1) {
+                index_other = 56 + 7;
+                for (int i = index + 1; i < index_other; ++i) {
+                    if (game->board[i] != -1) {
                         return -1;
                     }
                 }
             }
         } else {
-            queen_side = index==56+7;
-            index_other = 56+4; 
-            if(queen_side) {
-                for(int i = index+1;i<index_other;++i) {
-                    if(game->board[i]!=-1) {
+            queen_side = index == 56 + 7;
+            index_other = 56 + 4;
+            if (queen_side) {
+                for (int i = index + 1; i < index_other; ++i) {
+                    if (game->board[i] != -1) {
                         return -1;
                     }
                 }
             } else {
-                for(int i = index_other+1;i<index;++i) {
-                    if(game->board[i]!=-1) {
+                for (int i = index_other + 1; i < index; ++i) {
+                    if (game->board[i] != -1) {
                         return -1;
                     }
                 }
@@ -560,82 +634,116 @@ static chess_value_t compute_castling(const chess_game_t* game,chess_value_t ind
     // now we have to see if a piece is attacking any square between this one and the other index, inclusive
     chess_value_t tmp_moves[64];
     chess_value_t tmp_moves_size;
-    if(index_other>index) {
-        for(int i = index;i<=index_other;++i) {
-            for(int j=0;j<64;++j) {
+    if (index_other > index) {
+        for (int i = index; i <= index_other; ++i) {
+            for (int j = 0; j < 64; ++j) {
                 const chess_value_t cmp_id = game->board[j];
-                if(-1!=cmp_id && CHESS_TEAM(cmp_id)!=team) {
+                if (-1 != cmp_id && CHESS_TEAM(cmp_id) != team) {
                     // opposing piece
-                    tmp_moves_size = compute_moves(j,tmp_moves,game->board);
-                    if(chess_contains_move(tmp_moves,tmp_moves_size,i)) {
+                    tmp_moves_size = compute_moves(game, j, tmp_moves, game->board);
+                    if (chess_contains_move(tmp_moves, tmp_moves_size, i)) {
                         return -1;
                     }
                 }
             }
         }
     } else {
-        for(int i = index_other;i<=index;++i) {
-            for(int j=0;j<64;++j) {
+        for (int i = index_other; i <= index; ++i) {
+            for (int j = 0; j < 64; ++j) {
                 const chess_value_t cmp_id = game->board[j];
-                if(-1!=cmp_id && CHESS_TEAM(cmp_id)!=team) {
+                if (-1 != cmp_id && CHESS_TEAM(cmp_id) != team) {
                     // opposing piece
-                    tmp_moves_size = compute_moves(j,tmp_moves,game->board);
-                    if(chess_contains_move(tmp_moves,tmp_moves_size,i)) {
+                    tmp_moves_size = compute_moves(game, j, tmp_moves, game->board);
+                    if (chess_contains_move(tmp_moves, tmp_moves_size, i)) {
                         return -1;
                     }
                 }
             }
         }
     }
-   
+
     return index_other;
 }
 chess_value_t chess_move(chess_game_t* game, chess_value_t index_from, chess_value_t index_to) {
-    if (game == NULL || index_from < 0 || index_from > 63 || index_to < 0 || index_to > 63 || index_from==index_to) {
-        return 0;
+    if (game == NULL || index_from < 0 || index_from > 63 || index_to < 0 || index_to > 63 || index_from == index_to) {
+        return -2;
     }
 
     const chess_value_t id = game->board[index_from];
+    const chess_type_t type = CHESS_TYPE(id);
     const chess_value_t team = CHESS_TEAM(id);
     if (game->turn != team) {
-        return 0;
+        return -2;
     }
     chess_value_t tmp_moves[64];
     chess_value_t tmp_moves_size = 0;
     chess_value_t index_other = -1;
-    chess_value_t index_other_qs = -1;
-    const chess_value_t king_index = game->kings[CHESS_TEAM(id)];
-    if(is_checked_king(king_index,game->board)) {
-        tmp_moves_size = compute_check_moves(index_from,king_index, game->board, tmp_moves);
+    const chess_value_t king_index = game->kings[team];
+    if (is_checked_king(game, king_index, game->board)) {
+        tmp_moves_size = compute_check_moves(game, index_from, king_index, game->board, tmp_moves);
     } else {
-        tmp_moves_size = compute_moves(index_from, tmp_moves, game->board);
+        tmp_moves_size = compute_moves(game, index_from, tmp_moves, game->board);
         // castle if possible
-        index_other = compute_castling(game,index_from,0);
-        if(index_other!=index_to) {
-            index_other= compute_castling(game,index_from,1);
+        index_other = compute_castling(game, index_from, 0);
+        if (index_other != index_to) {
+            index_other = compute_castling(game, index_from, 1);
         }
-        if(index_other==index_to) {
-            game->no_castle[team]=1;
+        if (index_other == index_to) {
+            game->no_castle[team] = 1;
             const chess_value_t other_id = game->board[index_other];
             game->board[index_to] = game->board[index_from];
             game->board[index_from] = other_id;
-            if(CHESS_TYPE(id)==CHESS_KING) {
-                game->kings[CHESS_TEAM(id)]=index_to;
+            if (type == CHESS_KING) {
+                game->kings[team] = index_to;
             }
             // still our turn
-            return 1;
+            return -1;
         }
     }
-    if(chess_contains_move(tmp_moves, tmp_moves_size, index_to)) {
+    if (chess_contains_move(tmp_moves, tmp_moves_size, index_to)) {
+        char added = 0;
+        chess_value_t result = -1;
+        if (type == CHESS_PAWN) {
+            clear_en_passant_target(game, index_from);
+            // check for en passant target eligibility.
+            // we can tell if it's the first move advanced by two
+            // simply by checking the index for a difference of 16
+            // the only way it gets that is moving two and the only
+            // time that can happen is first move
+            if (team == 0) {
+                if (index_from == index_to - 16) {
+                    add_en_passant_target(game, index_to);
+                    added = 1;
+                }
+            } else if (team == 1) {
+                if (index_from == index_to + 16) {
+                    add_en_passant_target(game, index_to);
+                    added = 1;
+                }
+            }
+            const chess_value_t attack_index = en_passant_target_from_move(game, index_from, index_to, game->board);
+            if (attack_index != -1) {
+                game->board[attack_index] = -1;
+                result = attack_index;
+            }
+        }
+        if (game->board[index_to] != -1 && CHESS_TEAM(game->board[index_to]) != team) {
+            result = index_to;
+        }
         game->board[index_to] = game->board[index_from];
-        game->board[index_from] = -1;
-        if(++game->turn>1) { game->turn = 0; }
-        if(CHESS_TYPE(id)==CHESS_KING) {
-            game->kings[CHESS_TEAM(id)]=index_to;
+        if (!added && game->board[index_to] != -1) {
+            clear_en_passant_target(game, index_to);
         }
-        return 1;    
+        if (++game->turn > 1) {
+            game->turn = 0;
+        }
+        if (CHESS_TYPE(id) == CHESS_KING) {
+            game->kings[CHESS_TEAM(id)] = index_to;
+        }
+        game->board[index_from] = -1;
+        return result;
     }
-    return 0;
+    return -2;
 }
 chess_value_t chess_compute_moves(const chess_game_t* game, chess_value_t index, chess_value_t* out_moves) {
     if (game == NULL || index < 0 || index > 63) {
@@ -647,18 +755,18 @@ chess_value_t chess_compute_moves(const chess_game_t* game, chess_value_t index,
     }
     chess_value_t result = 0;
     const chess_value_t king_index = game->kings[CHESS_TEAM(id)];
-    if(is_checked_king(king_index,game->board)) {
-        result = compute_check_moves(index,king_index, game->board, out_moves);
+    if (is_checked_king(game, king_index, game->board)) {
+        result = compute_check_moves(game, index, king_index, game->board, out_moves);
     } else {
-        result = compute_moves(index, out_moves, game->board);
-        eliminate_checked_moves(index,game->kings,game->board,out_moves,&result);
-        chess_value_t index_other = compute_castling(game,index,0);
-        if(index_other!=-1) {
-            out_moves[result++]=index_other;
-        } 
-        index_other = compute_castling(game,index,1);
-        if(index_other!=-1) {
-            out_moves[result++]=index_other;
+        result = compute_moves(game, index, out_moves, game->board);
+        eliminate_checked_moves(game, index, game->kings, game->board, out_moves, &result);
+        chess_value_t index_other = compute_castling(game, index, 0);
+        if (index_other != -1) {
+            out_moves[result++] = index_other;
+        }
+        index_other = compute_castling(game, index, 1);
+        if (index_other != -1) {
+            out_moves[result++] = index_other;
         }
     }
     return result;
@@ -667,7 +775,7 @@ chess_value_t chess_turn(const chess_game_t* game) {
     return game->turn;
 }
 chess_value_t chess_index_to_id(const chess_game_t* game, chess_value_t index) {
-    if(game==NULL || index<0 || index>63) {
+    if (game == NULL || index < 0 || index > 63) {
         return -1;
     }
     return game->board[index];
@@ -675,41 +783,46 @@ chess_value_t chess_index_to_id(const chess_game_t* game, chess_value_t index) {
 chess_status_t chess_status(const chess_game_t* game, chess_value_t team) {
     const chess_value_t index = game->kings[team];
     chess_value_t moves[64];
-    if(is_checked_king(index,game->board)) {
-        if(0==chess_compute_moves(game,index,moves)) {
-            return CHESS_MATE;
+    if (is_checked_king(game, index, game->board)) {
+        if (0 == chess_compute_moves(game, index, moves)) {
+            return CHESS_CHECKMATE;
         }
         return CHESS_CHECK;
+    } else {
+        if (0 == chess_compute_moves(game, index, moves)) {
+            return CHESS_STALEMATE;
+        }
     }
     return CHESS_NORMAL;
 }
 chess_value_t chess_promote_pawn(chess_game_t* game, chess_value_t index, chess_type_t new_type) {
-    if(game==NULL || index<0 || index>63 || new_type==CHESS_PAWN) {
+    if (game == NULL || index < 0 || index > 63 || new_type == CHESS_PAWN) {
         return 0;
     }
     const chess_value_t id = game->board[index];
     const chess_value_t team = CHESS_TEAM(id);
-    if(CHESS_TYPE(id)!=CHESS_PAWN || team!=game->turn) {
+    if (CHESS_TYPE(id) != CHESS_PAWN || team != game->turn) {
         return 0;
     }
-    if(team==0) {
-        if(index<(64-8)) {
+    if (team == 0) {
+        if (index < (64 - 8)) {
             return 0;
         }
     } else {
-        if(index>7) {
+        if (index > 7) {
             return 0;
         }
     }
-    game->board[index]=CHESS_ID(team,new_type);
+    clear_en_passant_target(game, index);
+    game->board[index] = CHESS_ID(team, new_type);
     return 1;
 }
-chess_value_t chess_index_name(int index,char* out_buffer) {
-    if(index<0 || index>63 || out_buffer==NULL) {
+chess_value_t chess_index_name(int index, char* out_buffer) {
+    if (index < 0 || index > 63 || out_buffer == NULL) {
         return 0;
     }
     const chess_value_t x = index % 8;
-    const chess_value_t y = (7-index / 8)+1;
-    sprintf(out_buffer,"%c%d",x+'a',y);
+    const chess_value_t y = (7 - index / 8) + 1;
+    sprintf(out_buffer, "%c%d", x + 'a', y);
     return 1;
 }

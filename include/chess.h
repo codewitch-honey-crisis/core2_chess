@@ -1,5 +1,6 @@
 #ifndef CHESS_H
 #define CHESS_H
+
 typedef enum {
     CHESS_PAWN = 0,
     CHESS_BISHOP = 1,
@@ -11,7 +12,9 @@ typedef enum {
 typedef enum {
     CHESS_NORMAL = 0,
     CHESS_CHECK = 1,
-    CHESS_MATE  = 2
+    CHESS_CHECKMATE  = 2,
+    CHESS_STALEMATE = 3
+
 } chess_status_t;
 
 typedef signed char chess_value_t;
@@ -24,6 +27,7 @@ typedef signed char chess_value_t;
 typedef struct {
     chess_value_t board[64];
     chess_value_t kings[2];
+    chess_value_t en_passant_targets[16];
     chess_value_t turn;
     chess_value_t no_castle[2];
 } chess_game_t;
@@ -38,7 +42,7 @@ void chess_init(chess_game_t* out_game);
 /// @param game the chess game  
 /// @param index_from The index to move from
 /// @param index_to The index to move to.
-/// @return Nonzero if it was the right turn, and the move was valid. Otherwise zero
+/// @return The index of the capture victim if successful. -1 if no capture. -2 on illegal move or invalid arguments
 chess_value_t chess_move(chess_game_t* game, chess_value_t index_from, chess_value_t index_to);
 /// @brief Computes the available moves for a specified piece on the board
 /// @param game The chess game
